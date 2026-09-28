@@ -1,8 +1,7 @@
 """step3.py の食事・ケア入力画面を Streamlit に移した版。
 
-
-
-rabbits.json、foods.json、meal_records.json をこのファイルと同じフォルダに置く。
+ローカルでは3つのJSONファイルを同じフォルダに置く。
+Google DriveではStreamlit Secretsの認証情報とファイルIDを使用する。
 
 起動: python -m streamlit run rabbit_streamlit.py
 
@@ -12,19 +11,14 @@ import json
 
 import math
 
-import os
 
-import tempfile
 
 from datetime import date, datetime
 
 from pathlib import Path
 
-
-
 import streamlit as st
-
-
+from drive_storage import read_list, write_records
 
 BASE = Path(__file__).resolve().parent
 
@@ -33,8 +27,6 @@ RABBIT_FILE = BASE / "rabbits.json"
 FOOD_FILE = BASE / "foods.json"
 
 MEAL_FILE = BASE / "meal_records.json"
-
-
 
 st.set_page_config(page_title="うさぎ管理ソフト", page_icon="🐰", layout="centered")
 
@@ -48,58 +40,6 @@ h1, h2, h3 { color: #a65670; }
 
 </style>""", unsafe_allow_html=True)
 
-
-
-
-
-def read_list(path):
-
-    if not path.exists():
-
-        return []
-
-    with path.open(encoding="utf-8") as file:
-
-        value = json.load(file)
-
-    if not isinstance(value, list):
-
-        raise ValueError(f"{path.name} は配列形式で保存してください。")
-
-    return value
-
-
-
-
-
-def write_records(records):
-
-    """一時ファイル経由で同じフォルダの記録を更新する。"""
-
-    descriptor, name = tempfile.mkstemp(prefix=".meal_records_", suffix=".json", dir=BASE)
-
-    try:
-
-        with os.fdopen(descriptor, "w", encoding="utf-8") as file:
-
-            json.dump(records, file, ensure_ascii=False, indent=4)
-
-            file.flush()
-
-            os.fsync(file.fileno())
-
-        os.replace(name, MEAL_FILE)
-
-    finally:
-
-        if os.path.exists(name):
-
-            os.unlink(name)
-
-
-
-
-
 def parse_day(value):
 
     try:
@@ -109,10 +49,6 @@ def parse_day(value):
     except (TypeError, ValueError):
 
         return None
-
-
-
-
 
 def find_record(records, rabbit_id, day, meal_time):
 
@@ -148,10 +84,6 @@ def find_record(records, rabbit_id, day, meal_time):
 
     return None, False
 
-
-
-
-
 def load_context(context):
 
     rabbit_id, day, meal_time = context
@@ -184,19 +116,11 @@ def load_context(context):
 
     st.session_state.epoch = st.session_state.get("epoch", 0) + 1
 
-
-
-
-
 def snapshot():
 
     s = st.session_state
 
     return (tuple((r["item"], r["amount"]) for r in s.rows), s.total, s.leftover, s.cage_cleaned, s.toilet_cleaned, s.memo.strip())
-
-
-
-
 
 def capture_widgets():
 
@@ -217,10 +141,6 @@ def capture_widgets():
     s.toilet_cleaned = s.get(f"toilet_cleaned_{s.epoch}", s.toilet_cleaned)
 
     s.memo = s.get(f"memo_{s.epoch}", s.memo)
-
-
-
-
 
 def save_record(rabbits):
 
@@ -296,7 +216,7 @@ def save_record(rabbits):
 
             records.append(record)
 
-        write_records(records)
+        write_records(records, MEAL_FILE)
 
     except (OSError, ValueError, json.JSONDecodeError) as exc:
 
@@ -314,10 +234,6 @@ def save_record(rabbits):
 
     return True
 
-
-
-
-
 def save_if_changed(rabbits):
 
     capture_widgets()
@@ -329,10 +245,6 @@ def save_if_changed(rabbits):
         return save_record(rabbits)
 
     return True
-
-
-
-
 
 def switch_context(rabbits, new_context):
 
@@ -356,19 +268,11 @@ def switch_context(rabbits, new_context):
 
         s.selected_time = old_time
 
-
-
-
-
 def change_selection(rabbits):
 
     s = st.session_state
 
     switch_context(rabbits, (s.selected_id, s.selected_date.strftime("%Y/%m/%d"), s.selected_time))
-
-
-
-
 
 def move_rabbit(rabbits, delta):
 
@@ -384,19 +288,11 @@ def move_rabbit(rabbits, delta):
 
         s.selected_id = s.context[0]
 
-
-
-
-
 def add_row():
 
     capture_widgets()
 
     st.session_state.rows.append({"item": "", "amount": ""})
-
-
-
-
 
 def remove_row(index):
 
@@ -412,19 +308,11 @@ def remove_row(index):
 
     st.session_state.epoch += 1
 
-
-
-
-
 def submit(rabbits):
 
     capture_widgets()
 
     save_record(rabbits)
-
-
-
-
 
 try:
 
@@ -437,8 +325,6 @@ except (OSError, ValueError, json.JSONDecodeError) as exc:
     st.error(f"マスターファイルを読み込めませんでした：{exc}")
 
     st.stop()
-
-
 
 rabbits = [r for r in all_rabbits if "🌈" not in str(r.get("note") or "") and "販" not in str(r.get("note") or "")]
 
@@ -470,8 +356,6 @@ if "context" not in st.session_state or st.session_state.context[0] not in {r["i
 
     st.session_state.selected_time = "あさ"
 
-
-
 s = st.session_state
 
 st.title("🐰 うさぎ管理ソフト")
@@ -486,11 +370,10 @@ if "notice" in s:
 
     st.success(s.pop("notice"))
 
-
-
 input_tab, record_tab = st.tabs(["✏️ 毎日の入力", "📖 記録を見る"])
 
 with input_tab:
+
     left, right = st.columns(2)
 
     with left:
@@ -510,8 +393,6 @@ with input_tab:
     index = next(i for i, r in enumerate(rabbits) if r["id"] == rabbit["id"])
 
     st.caption(f"ID：{rabbit['id']}　性別：{rabbit.get('gender', '')}　｜　現在：{index + 1} / {len(rabbits)}羽")
-
-
 
     st.subheader("食事・ケア")
 
@@ -563,97 +444,184 @@ with input_tab:
 
     following.button("次のうさぎ →", disabled=index == len(rabbits)-1, on_click=move_rabbit, args=(rabbits, 1), use_container_width=True)
 
-
 with record_tab:
+
     st.subheader("保存した記録を見る")
+
     try:
+
         saved_records = read_list(MEAL_FILE)
+
     except (OSError, ValueError, json.JSONDecodeError) as exc:
+
         st.error(f"記録ファイルを読み込めませんでした：{exc}")
+
         saved_records = []
+
     if not saved_records:
+
         st.info("保存済みの記録はまだありません。")
+
     else:
+
         name_options = {str(r.get("id", "")): str(r.get("name", "")) for r in all_rabbits}
+
         for r in saved_records:
+
             name_options.setdefault(str(r.get("rabbit_id", "")), str(r.get("rabbit_name", "")))
+
         filter_left, filter_right = st.columns(2)
+
         with filter_left:
+
             day_filter = st.selectbox(
+
                 "日付", ["すべて"] + sorted({str(r.get("date", "")) for r in saved_records}, reverse=True)
+
             )
+
         with filter_right:
+
             rabbit_filter = st.selectbox(
+
                 "うさぎ", ["すべて"] + sorted({str(r.get("rabbit_id", "")) for r in saved_records}),
+
                 format_func=lambda rid: "すべて" if rid == "すべて" else f"{name_options.get(rid, rid)}（{rid}）",
+
             )
+
         filtered = [
+
             (i, r) for i, r in enumerate(saved_records)
+
             if (rabbit_filter == "すべて" or str(r.get("rabbit_id", "")) == rabbit_filter)
+
             and (day_filter == "すべて" or str(r.get("date", "")) == day_filter)
+
         ]
+
         sort_mode = st.radio(
+
             "並び順", ["日付順（新しい順）", "日付順（古い順）", "うさぎ順"],
+
             horizontal=True,
+
         )
+
         def order_key(pair):
+
             i, record = pair
+
             day = str(record.get("date", ""))
+
             meal = 0 if record.get("meal_time") == "あさ" else 1
+
             if sort_mode == "うさぎ順":
+
                 return (str(record.get("rabbit_id", "")), day, meal, i)
+
             return (day, meal, str(record.get("rabbit_id", "")), i)
 
         filtered.sort(key=order_key, reverse=sort_mode == "日付順（新しい順）")
+
         st.caption(f"{len(filtered)}件の記録")
+
         if filtered:
+
             def care_text(record):
+
                 return "、".join(
+
                     f"{row.get('item', '')} {row.get('amount', '')}".strip()
+
                     for row in record.get("care", []) if isinstance(row, dict)
+
                 )
 
             st.dataframe([{
+
                 "日付": r.get("date", ""), "朝夜": r.get("meal_time", ""),
+
                 "うさぎ": r.get("rabbit_name") or name_options.get(str(r.get("rabbit_id", "")), ""),
+
                 "食事・ケア": care_text(r), "総量g": r.get("total_amount", ""),
+
                 "残りg": r.get("previous_leftover", ""),
+
                 "ケージ": "済" if r.get("cage_cleaned") else "",
+
                 "トイレ": "済" if r.get("toilet_cleaned") else "",
+
                 "MEMO": r.get("memo", ""),
+
             } for _, r in filtered], hide_index=True, width=1090,
+
                 column_config={
+
                     "日付": st.column_config.TextColumn(width=108),
+
                     "朝夜": st.column_config.TextColumn(width=58, help="あさ／よる"),
+
                     "うさぎ": st.column_config.TextColumn(width=118),
+
                     "食事・ケア": st.column_config.TextColumn(width=350, help="長い内容は下の詳細で全文を確認できます"),
+
                     "総量g": st.column_config.TextColumn(width=62),
+
                     "残りg": st.column_config.TextColumn(width=62),
+
                     "ケージ": st.column_config.TextColumn(width=64, help="ケージ掃除"),
+
                     "トイレ": st.column_config.TextColumn(width=64, help="トイレ掃除"),
+
                     "MEMO": st.column_config.TextColumn(width=180),
+
                 },
+
             )
+
             chosen = st.selectbox(
+
                 "詳しく見る記録", range(len(filtered)),
+
                 format_func=lambda n: (
+
                     f"{filtered[n][1].get('date', '')} {filtered[n][1].get('meal_time', '')} "
+
                     f"｜{filtered[n][1].get('rabbit_name', '')}（{filtered[n][1].get('rabbit_id', '')}）"
+
                 ),
+
             )
+
             selected = filtered[chosen][1]
+
             st.markdown("**食事・ケア（全文）**")
+
             if selected.get("care"):
+
                 for row in selected["care"]:
+
                     if isinstance(row, dict):
+
                         st.write(f"・{row.get('item', '')}　{row.get('amount', '')}")
+
             else:
+
                 st.write("記録なし")
+
             st.write("与えた量の総量：", str(selected.get("total_amount", "")) + " g" if str(selected.get("total_amount", "")) else "未入力")
+
             st.write("前回のごはんの残り：", str(selected.get("previous_leftover", "")) + " g" if str(selected.get("previous_leftover", "")) else "未入力")
+
             st.write("ケージ掃除：", "済" if selected.get("cage_cleaned") else "記録なし")
+
             st.write("トイレ掃除：", "済" if selected.get("toilet_cleaned") else "記録なし")
+
             st.write("MEMO：", selected.get("memo", "") or "記録なし")
+
             st.caption("修正するときは「毎日の入力」タブで同じ日付・あさ／よる・うさぎを選び、保存してください。")
+
         else:
+
             st.info("この条件に合う記録はありません。")
