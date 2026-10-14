@@ -6,3 +6,4 @@ meal_records.json
 *credentials*.json
 __pycache__/
 *.pyc
+.venv/
