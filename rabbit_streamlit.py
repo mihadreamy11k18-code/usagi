@@ -544,17 +544,25 @@ with grid_tab:
     # 各セルの編集がサーバーへ届くたびに、日付・朝夜別の下書きを残す。
     s.grid_drafts[draft_key] = {"quantity": edited.copy(), "leftovers": leftovers.copy(), "checks": checked.copy(), "originals": s.grid_originals.copy()}
     with st.expander("うさぎの並び順を変更・保存"):
-        st.caption("ここで変更した順番は、次回も使います。ごはんごとの画面だけに適用し、ほかの端末とも共有します。表の見出しを直接ドラッグした順番は保存されません。")
+        st.caption("移動するうさぎと移動先を選び、変更後の並びを確認して保存してください。保存した順番は、次回も使います。ごはんごとの画面だけに適用し、ほかの端末とも共有します。表の見出しを直接ドラッグした順番は保存されません。")
         order_ids = [r["id"] for r in grid_rabbits]
         order_names = {r["id"]: r["name"] for r in grid_rabbits}
         selected_order = st.selectbox("移動するうさぎ", order_ids, format_func=lambda rid: order_names[rid], key="grid_order_rabbit")
-        order_position = order_ids.index(selected_order)
-        order_left, order_right = st.columns(2)
-        move_left = order_left.button("← 左へ移動して順番を保存", disabled=order_position == 0)
-        move_right = order_right.button("右へ移動して順番を保存 →", disabled=order_position == len(order_ids)-1)
-        if move_left or move_right:
-            destination = order_position + (-1 if move_left else 1)
-            order_ids[order_position], order_ids[destination] = order_ids[destination], order_ids[order_position]
+        st.write("現在の並び（左から）：" + " → ".join(f"{n+1}. {order_names[rid]}" for n, rid in enumerate(order_ids)))
+        other_ids = [rid for rid in order_ids if rid != selected_order]
+        if other_ids:
+            anchor = st.selectbox("移動先の目印にするうさぎ", other_ids, format_func=lambda rid: f"{order_ids.index(rid)+1}番：{order_names[rid]}", key=f"grid_order_anchor_{selected_order}")
+            placement = st.radio("置く位置", ["このうさぎの前（左）", "このうさぎの後ろ（右）"], horizontal=True, key="grid_order_placement")
+            proposed_order = other_ids.copy()
+            destination = proposed_order.index(anchor) + (1 if placement == "このうさぎの後ろ（右）" else 0)
+            proposed_order.insert(destination, selected_order)
+            st.info(f"{order_names[selected_order]}を、{order_names[anchor]}の{'後ろ（右）' if placement == 'このうさぎの後ろ（右）' else '前（左）'}へ移動します。")
+            st.write("変更後の並び（左から）：" + " → ".join(f"{n+1}. {order_names[rid]}" for n, rid in enumerate(proposed_order)))
+            save_order = st.button("この並び順を保存", disabled=proposed_order == order_ids)
+        else:
+            save_order = False
+        if save_order:
+            order_ids = proposed_order
             try:
                 master = read_list(RABBIT_FILE)
                 ranks = {rid: n for n, rid in enumerate(order_ids)}
