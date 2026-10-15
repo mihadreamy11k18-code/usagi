@@ -389,9 +389,83 @@ if "notice" in s:
 
     st.success(s.pop("notice"))
 
-input_tab, grid_tab, record_tab, master_tab, rabbit_list_tab = st.tabs(["🐰 うさぎごと", "🥣 ごはんごと", "📖 記録を見る", "🐰 うさぎ追加", "📋 うさぎリスト"])
+# ページ名を独立した状態に保持し、保存の再実行でも入力画面を維持。
+s.setdefault("page", "menu")
+# 非表示になったウィジェットの削除から、うさぎごとの選択を保護。
+s.selected_id = s.get("selected_id", s.context[0])
+s.selected_date = s.get("selected_date", parse_day(s.context[1]))
+s.selected_time = s.get("selected_time", s.context[2])
 
-with input_tab:
+def navigate(page):
+    if s.page == "input":
+        capture_widgets()
+    if page == "grid":
+        # 同じ接続内の入力下書きを復元して、他画面での更新も確認し直す。
+        s.grid_epoch = s.get("grid_epoch", 0) + 1
+    s.page = page
+
+page_names = {"input": "うさぎごと", "grid": "ごはんごと", "records": "記録を見る", "add": "うさぎ追加", "list": "うさぎリスト"}
+if s.page != "menu":
+    st.button("⌂ メニューへ戻る", on_click=navigate, args=("menu",), key="back_to_menu")
+    st.subheader(page_names.get(s.page, ""))
+
+if s.page == "menu":
+    st.markdown("""
+    <style>
+    [class*="st-key-menu_open_"] { margin: 30px 6px 18px; }
+    [class*="st-key-menu_open_"] button {
+      position:relative; min-height:116px; border-radius:48%;
+      border:2px solid #b6c9b6; background:#faf6ed; color:#3f5749;
+      box-shadow:0 5px 0 #e6e9dd; overflow:visible;
+    }
+    [class*="st-key-menu_open_"] button::before,
+    [class*="st-key-menu_open_"] button::after {
+      content:""; position:absolute; top:-27px; width:23px; height:38px;
+      border:2px solid #b6c9b6; background:#faf6ed; border-radius:60% 60% 40% 40%;
+      pointer-events:none;
+    }
+    [class*="st-key-menu_open_"] button::before {left:31%;transform:rotate(-13deg)}
+    [class*="st-key-menu_open_"] button::after {right:31%;transform:rotate(13deg)}
+    [class*="st-key-menu_open_"] button:hover {background:#edf3e8;border-color:#7b9f82}
+    [class*="st-key-menu_open_"] button p {font-size:17px;font-weight:600}
+    @media(max-width:600px) {
+      [class*="st-key-menu_open_"] button {min-height:100px}
+    }
+    </style>
+    """, unsafe_allow_html=True)
+    hero, choices = st.columns([1, 1.7])
+    with hero:
+        st.markdown("""
+        <svg viewBox="0 0 320 350" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="ごはんを食べるうさぎのイラスト" style="width:100%;max-height:380px">
+        <ellipse cx="160" cy="318" rx="116" ry="17" fill="#e7ecdf"/>
+        <ellipse cx="153" cy="246" rx="88" ry="72" fill="#eee2cd"/>
+        <ellipse cx="120" cy="100" rx="28" ry="81" transform="rotate(-17 120 100)" fill="#eee2cd" stroke="#a6927e" stroke-width="3"/>
+        <ellipse cx="201" cy="96" rx="27" ry="80" transform="rotate(16 201 96)" fill="#eee2cd" stroke="#a6927e" stroke-width="3"/>
+        <ellipse cx="120" cy="96" rx="13" ry="57" transform="rotate(-17 120 96)" fill="#e4bfb4"/>
+        <ellipse cx="201" cy="92" rx="12" ry="56" transform="rotate(16 201 92)" fill="#e4bfb4"/>
+        <ellipse cx="161" cy="195" rx="89" ry="78" fill="#f5ecdd" stroke="#a6927e" stroke-width="3"/>
+        <circle cx="127" cy="190" r="6" fill="#594f46"/><circle cx="195" cy="190" r="6" fill="#594f46"/>
+        <ellipse cx="107" cy="211" rx="15" ry="8" fill="#eac9bc"/><ellipse cx="215" cy="211" rx="15" ry="8" fill="#eac9bc"/>
+        <path d="M154 207 Q161 200 168 207 L161 214Z" fill="#ad837e"/>
+        <path d="M161 214v8m0 0q-10 10-17 0m17 0q10 10 17 0" fill="none" stroke="#756052" stroke-width="2.5" stroke-linecap="round"/>
+        <path d="M90 278h140l-16 43H106Z" fill="#9db39a"/>
+        <ellipse cx="160" cy="278" rx="70" ry="15" fill="#718d71"/>
+        <path d="M135 278q0-27 24-35-2 25-24 35m27 0q0-25 24-34-1 25-24 34" fill="#c8d8a9"/>
+        </svg>
+        """, unsafe_allow_html=True)
+        st.caption("今日も、みんなの小さな記録を。")
+    with choices:
+        st.caption("使いたいメニューを選んでね。")
+        col_a, col_b = st.columns(2)
+        col_a.button("うさぎごと", key="menu_open_input", use_container_width=True, on_click=navigate, args=("input",))
+        col_b.button("ごはんごと", key="menu_open_grid", use_container_width=True, on_click=navigate, args=("grid",))
+        st.button("記録を見る", key="menu_open_records", use_container_width=True, on_click=navigate, args=("records",))
+        col_c, col_d = st.columns(2)
+        col_c.button("うさぎリスト", key="menu_open_list", use_container_width=True, on_click=navigate, args=("list",))
+        col_d.button("うさぎ追加", key="menu_open_add", use_container_width=True, on_click=navigate, args=("add",))
+
+
+if s.page == "input":
 
     left, right = st.columns(2)
 
@@ -469,7 +543,7 @@ with input_tab:
     following.button("次のうさぎ →", disabled=index == len(rabbits)-1, on_click=move_rabbit, args=(rabbits, 1), use_container_width=True)
 
 
-with grid_tab:
+if s.page == "grid":
     def grid_rank(rabbit):
         rank = rabbit.get("food_grid_order")
         return rank if isinstance(rank, int) and not isinstance(rank, bool) else 1000000
@@ -668,7 +742,7 @@ with grid_tab:
         overview = totals.rename(columns={r["id"]: r["name"] for r in grid_rabbits}).to_html(escape=True)
         components.html("""<style>body{margin:0;font-family:sans-serif}table{border-collapse:collapse;font-size:12px;white-space:nowrap}th,td{border:1px solid #dbcbd2;padding:5px;text-align:center}th{background:#faedf2}#wrap{transform-origin:top left}</style><div id="wrap">""" + overview + """</div><script>function fit(){let w=document.getElementById('wrap'),t=w.querySelector('table');w.style.transform='scale('+Math.min(1,document.documentElement.clientWidth/t.scrollWidth)+')';}window.addEventListener('resize',fit);fit();</script>""", height=400, scrolling=False)
 
-with record_tab:
+if s.page == "records":
 
     st.subheader("保存した記録を見る")
 
@@ -850,7 +924,7 @@ with record_tab:
 
             st.info("この条件に合う記録はありません。")
 
-with master_tab:
+if s.page == "add":
     st.subheader("うさぎを追加する")
     st.caption("現在使用している rabbits.json に追加します。Google Drive設定中はDrive側へ保存します。")
     default_id = f"{max([int(r['id']) for r in all_rabbits if str(r.get('id', '')).isdigit()] or [0]) + 1:04d}"
@@ -891,7 +965,7 @@ with master_tab:
                 st.error(f"登録できませんでした：{exc}")
 
 
-with rabbit_list_tab:
+if s.page == "list":
     st.subheader("うさぎリスト")
     try:
         rabbit_master = read_list(RABBIT_FILE)
