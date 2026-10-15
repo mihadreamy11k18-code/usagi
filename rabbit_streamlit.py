@@ -472,9 +472,17 @@ with input_tab:
 with grid_tab:
     st.caption("ごはんを横に配分入力できます。トッピングはチェック式です。表の変更は「まとめて保存」で確定します。")
     c1, c2 = st.columns(2)
+    s.setdefault("grid_drafts", {})
+    if "grid_time" not in s and "last_grid_time" in s:
+        s.grid_time = s.last_grid_time
+    if "grid_date" not in s and "last_grid_date" in s:
+        s.grid_date = s.last_grid_date
     grid_date = c1.date_input("表の日付", value=date.today(), format="YYYY/MM/DD", key="grid_date")
     grid_time = c2.radio("表の食事", ["あさ", "よる"], horizontal=True, key="grid_time")
+    s.last_grid_date, s.last_grid_time = grid_date, grid_time
     day = grid_date.strftime("%Y/%m/%d")
+    draft_key = f"{day}_{grid_time}"
+    st.info(f"入力・保存先：{day}　{grid_time}")
     try:
         grid_records = latest(read_list(MEAL_FILE))
     except (OSError, ValueError) as exc:
@@ -503,10 +511,16 @@ with grid_tab:
             for name in topping_names] for r in rabbits}, index=topping_names)
         s.grid_context, s.grid_bases, s.grid_originals = grid_key, bases, originals
         s.grid_main_names, s.grid_quantity, s.grid_checks = main_names, quantity, checks
+        draft = s.grid_drafts.get(draft_key)
+        if draft:
+            # 日付・朝夜を行き来しても編集中の表と比較元の記録を保持。
+            s.grid_quantity = draft["quantity"].reindex(index=main_names, columns=quantity.columns, fill_value="").copy()
+            s.grid_checks = draft["checks"].reindex(index=topping_names, columns=checks.columns, fill_value=False).copy()
+            s.grid_originals = draft["originals"]
     main_names = s.grid_main_names
     st.caption("保存済みの内容を表示し、未記録のうさぎは前回の食事・トッピングを引き継ぎます。薬・残り・掃除・メモは引き継ぎ保存しません。")
     columns = {r["id"]: st.column_config.TextColumn(r["name"], width="small", help=f"ID：{r['id']}　グラム数を入力") for r in rabbits}
-    with st.form(f"grid_form_{grid_key}"):
+    with st.container():
         st.markdown("**ごはんの量（g）**")
         edited = st.data_editor(s.grid_quantity, column_config=columns, disabled=["_index"], use_container_width=True, height=min(500, 36 * (len(main_names)+1)), key=f"quantity_{grid_key}")
         st.markdown("**トッピング（チェックで記録）**")
@@ -514,8 +528,15 @@ with grid_tab:
         checked = st.data_editor(s.grid_checks, column_config=check_config, disabled=["_index"], use_container_width=True, height=36*(len(topping_names)+1), key=f"checks_{grid_key}")
         st.caption("空欄＝そのごはんの記録なし。0＝0gの記録。トッピングのチェックは重量の合計に含みません。")
         a, b = st.columns(2)
-        preview = a.form_submit_button("合計を確認")
-        commit = b.form_submit_button("まとめて保存", type="primary")
+        preview = a.button("合計を確認")
+        commit = b.button(f"{grid_time}の内容をまとめて保存", type="primary")
+    # 各セルの編集がサーバーへ届くたびに、日付・朝夜別の下書きを残す。
+    s.grid_drafts[draft_key] = {"quantity": edited.copy(), "checks": checked.copy(), "originals": s.grid_originals.copy()}
+    draft_json = json.dumps({"date": day, "meal_time": grid_time,
+        "quantities": edited.to_dict(), "toppings": checked.to_dict()}, ensure_ascii=False, indent=2)
+    st.download_button("入力中の表を控えとしてダウンロード", data=draft_json,
+                       file_name=f"usagi_{grid_date.isoformat()}_{grid_time}.json", mime="application/json")
+    st.caption("セルを編集したらEnterまたはセルの外をクリックして確定してください。下書きはこの接続中だけ保持します。画面更新・終了前には保存か控えのダウンロードをしてください。")
     # 右端に食材別合計、最下段にうさぎ別合計を表示。
     totals = edited.copy()
     problems = []
@@ -533,6 +554,8 @@ with grid_tab:
     st.dataframe(totals.rename(columns={r["id"]: f"{r['name']}（{r['id']}）" for r in rabbits}), use_container_width=True)
     for problem in problems:
         st.warning(problem)
+    if commit and problems:
+        st.error("保存は行っていません。上の黄色いメッセージの欄を修正してください。入力内容は下書きに残っています。")
     if commit and not problems:
         try:
             capture_widgets()
@@ -552,6 +575,7 @@ with grid_tab:
                 updates.append(update_from_grid(now, r, day, grid_time, quantities, toppings, main_names, topping_names))
             if updates:
                 write_records(upsert(current, updates), MEAL_FILE)
+                s.grid_drafts.pop(draft_key, None)
                 s.grid_epoch = s.get("grid_epoch", 0) + 1
                 load_context(s.context)
                 s.notice = f"{day} {grid_time}：{len(updates)}羽分を保存しました。"
@@ -560,7 +584,9 @@ with grid_tab:
                 st.info("入力された内容がありません。")
         except (OSError, ValueError) as exc:
             st.error(f"保存できませんでした：{exc}")
-    if st.button("表を再読み込み", help="表の未保存の変更を破棄して保存済み記録を読み込みます。"):
+    discard_draft = st.checkbox("この日時の下書きを破棄して読み直す", key="discard_grid_draft")
+    if st.button("表を再読み込み", disabled=not discard_draft, help="控えを保存してから操作してください。"):
+        s.grid_drafts.pop(draft_key, None)
         s.grid_epoch = s.get("grid_epoch", 0) + 1
         st.rerun()
     st.markdown("**保存済み：ごはん別の朝・夜合計**")
