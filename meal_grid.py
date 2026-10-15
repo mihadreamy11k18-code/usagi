@@ -5,7 +5,9 @@ import re
 
 
 def grams(value):
-    text = str(value or "").strip()
+    if value is None or (isinstance(value, float) and math.isnan(value)):
+        return None
+    text = str(value).strip()
     if not text:
         return None
     match = re.fullmatch(r"([0-9]+(?:\.[0-9]+)?|\.[0-9]+)\s*(?:g|ｇ|グラム)?", text, re.I)

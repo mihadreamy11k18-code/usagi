@@ -77,7 +77,7 @@ def find_record(records, rabbit_id, day, meal_time):
 
         past = parse_day(record.get("date"))
 
-        if record.get("rabbit_id") != rabbit_id or past is None:
+        if record.get("rabbit_id") != rabbit_id or past is None or record.get("meal_time") != meal_time:
 
             continue
 
@@ -470,6 +470,10 @@ with input_tab:
 
 
 with grid_tab:
+    def grid_rank(rabbit):
+        rank = rabbit.get("food_grid_order")
+        return rank if isinstance(rank, int) and not isinstance(rank, bool) else 1000000
+    grid_rabbits = sorted(rabbits, key=grid_rank)
     st.caption("ごはんを横に配分入力できます。トッピングはチェック式です。表の変更は「まとめて保存」で確定します。")
     c1, c2 = st.columns(2)
     s.setdefault("grid_drafts", {})
@@ -491,7 +495,7 @@ with grid_tab:
     grid_key = (day, grid_time, s.get("grid_epoch", 0))
     if s.get("grid_context") != grid_key:
         bases, sources, originals = {}, {}, {}
-        for r in rabbits:
+        for r in grid_rabbits:
             source, copied = find_record(grid_records, r["id"], day, grid_time)
             sources[r["id"]] = source
             originals[r["id"]] = next((x for x in grid_records if (x.get("rabbit_id"), x.get("date"), x.get("meal_time")) == (r["id"], day, grid_time)), None)
@@ -506,42 +510,73 @@ with grid_tab:
                     main_names.append(name)
         quantity = pd.DataFrame({r["id"]: [
             " / ".join(str(x.get("amount", "")) for x in (sources[r["id"]] or {}).get("care", []) if x.get("item") == name)
-            for name in main_names] for r in rabbits}, index=main_names)
+            for name in main_names] for r in grid_rabbits}, index=main_names)
         checks = pd.DataFrame({r["id"]: [any(x.get("item") == name for x in (sources[r["id"]] or {}).get("care", []))
-            for name in topping_names] for r in rabbits}, index=topping_names)
+            for name in topping_names] for r in grid_rabbits}, index=topping_names)
         s.grid_context, s.grid_bases, s.grid_originals = grid_key, bases, originals
         s.grid_main_names, s.grid_quantity, s.grid_checks = main_names, quantity, checks
+        s.grid_leftovers = pd.DataFrame({r["id"]: [str((originals[r["id"]] or {}).get("previous_leftover", "") or "")] for r in grid_rabbits}, index=["前回のごはんの残り（g）"])
         draft = s.grid_drafts.get(draft_key)
         if draft:
             # 日付・朝夜を行き来しても編集中の表と比較元の記録を保持。
             s.grid_quantity = draft["quantity"].reindex(index=main_names, columns=quantity.columns, fill_value="").copy()
             s.grid_checks = draft["checks"].reindex(index=topping_names, columns=checks.columns, fill_value=False).copy()
             s.grid_originals = draft["originals"]
+            if "leftovers" in draft:
+                s.grid_leftovers = draft["leftovers"].reindex(columns=quantity.columns, fill_value="").copy()
     main_names = s.grid_main_names
-    st.caption("保存済みの内容を表示し、未記録のうさぎは前回の食事・トッピングを引き継ぎます。薬・残り・掃除・メモは引き継ぎ保存しません。")
-    columns = {r["id"]: st.column_config.TextColumn(r["name"], width="small", help=f"ID：{r['id']}　グラム数を入力") for r in rabbits}
+    st.caption("保存済みの内容を表示し、未記録のうさぎは同じ朝夜の直近の食事・トッピングを引き継ぎます（朝は前の朝、夜は前の夜）。薬・残り・掃除・メモは引き継ぎ保存しません。")
+    columns = {r["id"]: st.column_config.TextColumn(r["name"], width="small", help=f"ID：{r['id']}　グラム数を入力") for r in grid_rabbits}
     with st.container():
         st.markdown("**ごはんの量（g）**")
         edited = st.data_editor(s.grid_quantity, column_config=columns, disabled=["_index"], use_container_width=True, height=min(500, 36 * (len(main_names)+1)), key=f"quantity_{grid_key}")
+        edited = edited.fillna("")
+        st.markdown("**前回のごはんの残り（g）**")
+        st.caption("今回確認した残りの量を入力します。過去の残量は引き継ぎません。")
+        leftovers = st.data_editor(s.grid_leftovers, column_config=columns, disabled=["_index"], use_container_width=True, height=75, key=f"leftovers_{grid_key}").fillna("")
         st.markdown("**トッピング（チェックで記録）**")
-        check_config = {r["id"]: st.column_config.CheckboxColumn(r["name"], width="small") for r in rabbits}
+        check_config = {r["id"]: st.column_config.CheckboxColumn(r["name"], width="small") for r in grid_rabbits}
         checked = st.data_editor(s.grid_checks, column_config=check_config, disabled=["_index"], use_container_width=True, height=36*(len(topping_names)+1), key=f"checks_{grid_key}")
         st.caption("空欄＝そのごはんの記録なし。0＝0gの記録。トッピングのチェックは重量の合計に含みません。")
         a, b = st.columns(2)
         preview = a.button("合計を確認")
         commit = b.button(f"{grid_time}の内容をまとめて保存", type="primary")
     # 各セルの編集がサーバーへ届くたびに、日付・朝夜別の下書きを残す。
-    s.grid_drafts[draft_key] = {"quantity": edited.copy(), "checks": checked.copy(), "originals": s.grid_originals.copy()}
+    s.grid_drafts[draft_key] = {"quantity": edited.copy(), "leftovers": leftovers.copy(), "checks": checked.copy(), "originals": s.grid_originals.copy()}
+    with st.expander("うさぎの並び順を変更・保存"):
+        st.caption("ここで変更した順番は、次回も使います。ごはんごとの画面だけに適用し、ほかの端末とも共有します。表の見出しを直接ドラッグした順番は保存されません。")
+        order_ids = [r["id"] for r in grid_rabbits]
+        order_names = {r["id"]: r["name"] for r in grid_rabbits}
+        selected_order = st.selectbox("移動するうさぎ", order_ids, format_func=lambda rid: order_names[rid], key="grid_order_rabbit")
+        order_position = order_ids.index(selected_order)
+        order_left, order_right = st.columns(2)
+        move_left = order_left.button("← 左へ移動して順番を保存", disabled=order_position == 0)
+        move_right = order_right.button("右へ移動して順番を保存 →", disabled=order_position == len(order_ids)-1)
+        if move_left or move_right:
+            destination = order_position + (-1 if move_left else 1)
+            order_ids[order_position], order_ids[destination] = order_ids[destination], order_ids[order_position]
+            try:
+                master = read_list(RABBIT_FILE)
+                ranks = {rid: n for n, rid in enumerate(order_ids)}
+                for rabbit in master:
+                    if rabbit.get("id") in ranks:
+                        rabbit["food_grid_order"] = ranks[rabbit["id"]]
+                write_records(master, RABBIT_FILE)
+                s.grid_epoch = s.get("grid_epoch", 0) + 1
+                s.notice = "ごはんごとのうさぎの並び順を保存しました。"
+                st.rerun()
+            except (OSError, ValueError) as exc:
+                st.error(f"並び順を保存できませんでした：{exc}")
     draft_json = json.dumps({"date": day, "meal_time": grid_time,
-        "quantities": edited.to_dict(), "toppings": checked.to_dict()}, ensure_ascii=False, indent=2)
+        "quantities": edited.to_dict(), "leftovers": leftovers.to_dict(), "toppings": checked.to_dict()}, ensure_ascii=False, indent=2)
     st.download_button("入力中の表を控えとしてダウンロード", data=draft_json,
                        file_name=f"usagi_{grid_date.isoformat()}_{grid_time}.json", mime="application/json")
     st.caption("セルを編集したらEnterまたはセルの外をクリックして確定してください。下書きはこの接続中だけ保持します。画面更新・終了前には保存か控えのダウンロードをしてください。")
     # 右端に食材別合計、最下段にうさぎ別合計を表示。
     totals = edited.copy()
     problems = []
-    numeric = pd.DataFrame(0.0, index=main_names, columns=[r["id"] for r in rabbits])
-    for r in rabbits:
+    numeric = pd.DataFrame(0.0, index=main_names, columns=[r["id"] for r in grid_rabbits])
+    for r in grid_rabbits:
         for name in main_names:
             try:
                 numeric.loc[name, r["id"]] = grams(edited.loc[name, r["id"]]) or 0
@@ -549,9 +584,14 @@ with grid_tab:
                 problems.append(f"{r['name']}／{name}：{exc}")
                 numeric.loc[name, r["id"]] = float("nan")
     totals["合計g"] = [fmt(numeric.loc[name].sum()) if not numeric.loc[name].isna().any() else "要確認" for name in main_names]
-    totals.loc["今回合計g"] = [fmt(numeric[r["id"]].sum()) if not numeric[r["id"]].isna().any() else "要確認" for r in rabbits] + [fmt(numeric.sum().sum()) if not numeric.isna().any().any() else "要確認"]
+    totals.loc["今回合計g"] = [fmt(numeric[r["id"]].sum()) if not numeric[r["id"]].isna().any() else "要確認" for r in grid_rabbits] + [fmt(numeric.sum().sum()) if not numeric.isna().any().any() else "要確認"]
     st.markdown(f"**{day} {grid_time}：入力中の合計（保存前も含む）**")
-    st.dataframe(totals.rename(columns={r["id"]: f"{r['name']}（{r['id']}）" for r in rabbits}), use_container_width=True)
+    st.dataframe(totals.rename(columns={r["id"]: f"{r['name']}（{r['id']}）" for r in grid_rabbits}), use_container_width=True)
+    for r in grid_rabbits:
+        try:
+            grams(leftovers.iloc[0][r["id"]])
+        except ValueError as exc:
+            problems.append(f"{r['name']}／前回のごはんの残り：{exc}")
     for problem in problems:
         st.warning(problem)
     if commit and problems:
@@ -563,16 +603,19 @@ with grid_tab:
                 raise ValueError("うさぎごとの画面に未保存の変更があります。先にそちらを保存してから、表を再読み込みしてください。")
             current = read_list(MEAL_FILE)
             updates = []
-            for r in rabbits:
+            for r in grid_rabbits:
                 rid = r["id"]
                 now = next((x for x in reversed(current) if (x.get("rabbit_id"), x.get("date"), x.get("meal_time")) == (rid, day, grid_time)), None)
                 if now != s.grid_originals[rid]:
                     raise ValueError(f"{r['name']}の記録が別の画面で更新されています。表を再読み込みしてから入力してください。")
                 quantities = edited[rid].to_dict()
                 toppings = checked[rid].to_dict()
-                if now is None and not any(str(v).strip() for v in quantities.values()) and not any(toppings.values()):
+                leftover = grams(leftovers.iloc[0][rid])
+                if now is None and not any(grams(v) is not None for v in quantities.values()) and not any(toppings.values()) and leftover is None:
                     continue
-                updates.append(update_from_grid(now, r, day, grid_time, quantities, toppings, main_names, topping_names))
+                updated = update_from_grid(now, r, day, grid_time, quantities, toppings, main_names, topping_names)
+                updated["previous_leftover"] = fmt(leftover)
+                updates.append(updated)
             if updates:
                 write_records(upsert(current, updates), MEAL_FILE)
                 s.grid_drafts.pop(draft_key, None)
@@ -614,7 +657,7 @@ with grid_tab:
     with st.expander("全体を縮小して見る（入力中の表）"):
         import html
         import streamlit.components.v1 as components
-        overview = totals.rename(columns={r["id"]: r["name"] for r in rabbits}).to_html(escape=True)
+        overview = totals.rename(columns={r["id"]: r["name"] for r in grid_rabbits}).to_html(escape=True)
         components.html("""<style>body{margin:0;font-family:sans-serif}table{border-collapse:collapse;font-size:12px;white-space:nowrap}th,td{border:1px solid #dbcbd2;padding:5px;text-align:center}th{background:#faedf2}#wrap{transform-origin:top left}</style><div id="wrap">""" + overview + """</div><script>function fit(){let w=document.getElementById('wrap'),t=w.querySelector('table');w.style.transform='scale('+Math.min(1,document.documentElement.clientWidth/t.scrollWidth)+')';}window.addEventListener('resize',fit);fit();</script>""", height=400, scrolling=False)
 
 with record_tab:
